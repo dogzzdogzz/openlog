@@ -1,511 +1,734 @@
 #!/bin/sh /etc/rc.common
-# Copyright (C) 2006 OpenWrt.org
-INITTAB=/etc/inittab
-screen_config=/etc/screenrc
-screenlog=/tmp/screenlog.0
-log_list=/tmp/openlog_list
-terminal=/dev/ttyS0
-openlog_state=/tmp/openlog_state
-COMM_MODE='1'
-log_file="EMPTY_FILENAME"
-read_timeout="0"
+
+#prints each command before it executes. enable: set -o xtrace , disable: set +o xtrace
+#set -o xtrace
+
+Inittab=/etc/inittab
+ScreenConfig=/etc/screenrc
+ScreenLog=/tmp/screenlog.0
+LogList=/tmp/openlog_list
+Terminal=/dev/ttyS0
+OpenlogState=/tmp/openlogstate
+OpenlogDebugLog=/tmp/openlog_debugLog
+Mode='1'
+Filename="EMPTY_FILENAME"
+ReadTimeout="10"
 MAC=$(ifconfig br-lan | grep HWaddr | sed 's/\ //g' | sed 's/.*HWaddr//' | sed 's/\://g')
-tftp_srv=diagnosis.engeniusnetworks.com
-record_time=""
+TftpSrv=diagnosis.engeniusnetworks.com
+ExportTime=$(date +"%Y%m%d_%H%M%S")
+EndChar=">"
+EscapeChar="2<"
 
-console_enable() {
-    echo "console_enable"
-
-    echo 'Enabling openlog console, please wait...'
-    [ -n "$(screen -ls | grep tached)" ] && killall screen
-    #screen -ls | grep tached | cut -d. -f1 | awk '{print $1}' | xargs kill &> /dev/null
-    echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\n#ttyS0::askfirst:/bin/login' > ${INITTAB}
-	init -q
-    ping -w 5 127.0.0.1 &> /dev/null
-	echo -e "startup_message off\nlogfile $screenlog" > ${screen_config}
-    screen -dmL ${terminal} 115200,cs8
-    ping -w 1 127.0.0.1 &> /dev/null
-    screen -r -p 0 -X eval 'stuff $$$'
-    ping -w 5 127.0.0.1 &> /dev/null
-    screen -r -p 0 -X eval 'stuff q1\015'
-    ping -w 5 127.0.0.1 &> /dev/null
-    screen -r -p 0 -X eval 'stuff q2\015'
-    ping -w 5 127.0.0.1 &> /dev/null
-    screen -r -p 0 -X eval 'stuff q3\015'
-    ping -w 5 127.0.0.1 &> /dev/null
-    killall screen &> /dev/null
-    ping -w 1 127.0.0.1 &> /dev/null
-    screen -dmL ${terminal} 115200,cs8
-    ping -w 1 127.0.0.1 &> /dev/null
-    screen -r -p 0 -X eval 'stuff q4\015\015\015\015\015\015\015\015\015\015\015'
-
-    echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyS0::askfirst:/bin/login' > ${INITTAB}
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
-    echo "console_enable OK" 2>&1 | tee ${openlog_state}
-}
-
-console_disable() {
-    echo "console_disable"
-    echo 'Disabling openlog console, please wait...'
-    echo > ${screenlog}
-    screen -r -p 0 -X eval 'stuff \015\015\015'
-    ping -w 3 127.0.0.1 &> /dev/null   
-    screen -r -p 0 -X eval 'stuff reset\015'
-    ping -w 3 127.0.0.1 &> /dev/null
-    killall screen &> /dev/null
-    echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyS0::askfirst:/bin/login' > ${INITTAB}
-    init -q
-    rm ${openlog_state}
-    echo "console_disable OK"
-}
-
-show_console_status() {
-    echo "console_status"
-    if [ -f "${openlog_state}" -a -n "$(screen -ls | grep tached)" ]; then
-        echo -e "\nOpenlog console is enabled\n"
+DebugLog() {
+    if [ $Debuglvl -eq 1 ]; then
+        echo "[$(date +"%Y/%m/%d %H:%M:%S")] $*" 2>&1 | tee -a ${OpenlogDebugLog}
     else
-        echo -e "\nOpenlog console is disabled\n"
+        echo "[$(date +"%Y/%m/%d %H:%M:%S")] $*" >> ${OpenlogDebugLog}
     fi
-    echo "console_status OK"
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
 }
 
-check_console_status(){
-    echo "check_console_status"
-    if [ ! -f "${openlog_state}" -o -z "$(screen -ls | grep tached)" ]; then
-        echo -e "\nError: Openlog console is disabled, please run \"sh "$0" enable\" first.\n"
+ConsoleEnable() {
+    DebugLog "Function: ConsoleEnable"
+    DebugLog "Enabling openlog console, please wait..."
+
+    if [ -n "$(screen -ls | grep tached)" ]; then
+        echo > $ScreenLog
+        screen -r -p 0 -X eval 'stuff \015'
+        local i=0
+        while [ $i -lt 15 ]; do
+            DebugLog $(echo "1.i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+            if [ "$(tail -1 ${ScreenLog})" != "${EndChar}" ] && [ "$(tail -1 ${ScreenLog})" != "${EscapeChar}" ]; then
+                sleep 1
+            else
+                DebugLog "Openlog console is already enabled"
+                break
+            fi
+            i=$(($i+1))
+        done
+    fi
+
+    if [ "$(tail -1 ${ScreenLog})" != "${EndChar}" ] && [ "$(tail -1 ${ScreenLog})" != "${EscapeChar}" ]; then
+        killall screen
+        echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\n#ttyS0::askfirst:/bin/login' > ${Inittab}
+        init -q
+        sleep 5
+        echo -e "startup_message off\nlogfile $ScreenLog" > ${ScreenConfig}
+        screen -c ${ScreenConfig} -dmL ${Terminal} 115200,cs8
+        sleep 2
+        #screen -ls | grep tached | cut -d. -f1 | awk '{print $1}' | xargs kill &> /dev/null
+        screen -r -p 0 -X eval 'stuff $$$'
+        sleep 5
+        screen -r -p 0 -X eval 'stuff q1\015'
+        sleep 5
+        screen -r -p 0 -X eval 'stuff q2\015'
+        sleep 5
+        screen -r -p 0 -X eval 'stuff q3\015'
+        sleep 5
+        killall screen &> /dev/null
+        sleep 2
+        screen -dmL ${Terminal} 115200,cs8
+        sleep 2
+        screen -r -p 0 -X eval 'stuff q4\015\015\015\015\015\015\015\015\015\015\015'
+        sleep 2
+        echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyS0::askfirst:/bin/login' > ${Inittab}
+        #echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0ca
+        
+        i=0
+        while [ $i -lt 15 ]; do
+            if [ "$(tail -1 ${ScreenLog})" = "${EndChar}" ]; then
+                DebugLog $(echo "2.i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+                echo "ConsoleEnable OK" 2>&1 | tee ${OpenlogState}
+                DebugLog "ConsoleEnable OK"
+                break
+            elif [ $i -lt 14 ]; then
+                DebugLog $(echo "2.i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+                sleep 1
+            else
+                DebugLog $(echo "2.i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+                DebugLog "ERROR: Failed to enable openlog console, please try again."
+                exit
+            fi
+            i=$(($i+1))
+        done
+    fi
+}
+
+ConsoleDisable() {
+    DebugLog "Function: ConsoleDisable"
+    DebugLog "Disabling openlog console, please wait..."
+    echo > ${ScreenLog}
+    screen -r -p 0 -X eval 'stuff reset\015'
+    local i=0
+    while [ $i -lt 15 ]; do
+        if [ "$(tail -c 2 ${ScreenLog})" = "${EscapeChar}" ]; then
+            DebugLog $(echo "i= "$i", tail ScreenLog result= "$(tail -c 2 ${ScreenLog}))
+            killall screen &> /dev/null
+            echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyS0::askfirst:/bin/login' > ${Inittab}
+            init -q
+            rm ${OpenlogState}
+            DebugLog "ConsoleDisable OK"
+            break
+        elif [ $i -lt 14 ]; then
+            DebugLog $(echo "i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+            sleep 1
+        else
+            DebugLog $(echo "i= "$i", prompt= "$(tail -1 ${ScreenLog}))
+            DebugLog "ERROR: Failed to disable openlog console, please try again."
+            exit
+        fi
+        i=$(($i+1))
+    done
+}
+
+CheckConsoleStatus(){
+    DebugLog "Function: CheckConsoleStatus"
+    screen -r -p 0 -X eval 'stuff q0\015'
+    local i=0
+    while [ $i -le 15 ]; do
+        DebugLog "Prompt= "$(tail -c 2 ${ScreenLog})
+        if [ "$(tail -c 2 ${ScreenLog})" = "${EscapeChar}" ]; then
+            DebugLog 'Prompt= Escape Char'
+            break
+        elif [ "$(tail -c 1 ${ScreenLog})" = "${EndChar}" ]; then
+            DebugLog 'Prompt= End Char'
+            break
+        elif [ $i -eq 14 ]; then
+            DebugLog "ERROR: Failed to access openlog console !"
+            exit
+        fi
+        i=$(($i+1))
+        sleep 1
+    done
+    if [ $ACTION = "status" ]; then
+        if [ -f "${OpenlogState}" -a -n "$(screen -ls | grep tached)" ]; then
+            DebugLog "Openlog console is ebabled\n"
+            exit
+        else
+            DebugLog "Openlog console is disabled\n"
+            exit
+        fi
+    elif [ ! -f "${OpenlogState}" -o -z "$(screen -ls | grep tached)" ] || [ "$(tail -c 2 ${ScreenLog})" = "${EscapeChar}" ]; then
+        DebugLog "ERROR: Openlog console is disabled, please run \"sh "$0" enable\" first.\n"
         exit
     fi  
 }
 
-log_ls() {
-    echo "log_ls"
-    check_console_status
+LogList() {
+    DebugLog "Function: LogList"
+    ConsoleEnable
 
-    echo > ${screenlog}
-    echo 'Reading file list, please wait...'
+    echo > ${ScreenLog}
     screen -r -p 0 -X eval 'stuff ls\015'
-    #echo -e "ls\015" > ${terminal}
-    ping -w 15 127.0.0.1 &> /dev/null
-    grep LOG ${screenlog} > ${log_list}
+    #echo -e "ls\015" > ${Terminal}
+    local i=0
+    while [ "$(tail -1 ${ScreenLog})" != ">" ]; do
+        DebugLog "Reading file list, please wait...$i"
+        sleep 1
+        i=`expr $i + 1`
+        if [ $i -gt 60 ]; then
+            DebugLog "ERROR: Failed to read file list, please try again"
+            exit
+        fi
+    done
+    grep LOG ${ScreenLog} | grep -v "    LOG" | grep -v "_LOG" > ${LogList}
 
-    file_num=$(wc -l < ${log_list})
-    echo "file_num="$file_num
+    file_num=$(wc -l < ${LogList})
+    DebugLog "file_num="$file_num
     echo "ID:Name          Size"
-    grep -n . ${log_list}
-    echo > ${screenlog}
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
-    echo "log_ls OK"
+    grep -n . ${LogList} 2>&1 | tee -a ${OpenlogDebugLog} 
+#    echo > ${ScreenLog}
+#    echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+    DebugLog "LogList OK"
 }
 
-log_read() {
-    echo 'log_read'
-    echo "TIMEOUT="${read_timeout}
-    if [ -z "${max_log_size}" ] ; then
-                    echo -e "\nError: -s MAX_LOG_SIZE not found"
-                    exit
-    fi
-
-    check_console_status
-
-    if [ ${COMM_MODE} = '1' ]; then
-        log_ls     
-        if [ -z "$(grep -w ${log_file} ${log_list})" ]; then
-            echo -e "\nError: Invalid filename"
+LogRead() {
+    DebugLog "Function: LogRead"
+    DebugLog "ReadTimeout="${ReadTimeout}
+    if [ ${Mode} = '1' ]; then
+        if [ "$Filename" = "EMPTY_FILENAME" ]; then
+            DebugLog "ERROR: Filename not found !"
+            exit
+        fi
+        LogList   
+        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+            DebugLog "ERROR: Invalid FILENAME"
+            exit
         else
-            loop_conf
-            if [ -z ${log_id} ]; then
-                log_id='0'
-                while [ ${log_id} -le ${loop} ]; do
-                    echo "log_id="${log_id}
-                    log_read_sub
-                    cat ${screenlog}
-                    #echo > ${screenlog}
-                    log_id=$((${log_id}+1))                            
+            LoopConf
+            if [ -z ${LogId} ]; then
+                LogId=0
+                while [ ${LogId} -le ${Loop} ]; do
+                    DebugLog "LogId="${LogId}
+                    LogReadSub
+                    cat ${ScreenLog}
+                    LogId=$((${LogId}+1))                            
                 done
             else
-                log_read_sub
-                #cat ${screenlog}
-                #echo > ${screenlog}
+                LogReadSub
+                cat ${ScreenLog}
             fi
-            echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
-            echo "log_read OK"
+  #         echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+            DebugLog "LogRead OK"
         fi
-    elif [ ${COMM_MODE} = '0' ]; then
-        log_ls
+    elif [ ${Mode} = '0' ]; then
+        LogList
         #http://stackoverflow.com/questions/226703/how-do-i-prompt-for-input-in-a-linux-shell-script 
         while true; do
-            echo > ${screenlog}
+            echo > ${ScreenLog}
             read -p "Which file ID you want to read ? (or input \"ls\" for print file list, \"N/n\" for exit) " file_id
             case $file_id in
-                [0-9]* )    echo "file_id="$file_id
+                [0-9]* )    DebugLog "file_id="$file_id
                             if [ ${file_id} = '0' ] || [ ${file_id} -gt ${file_num} ] ; then
-                                echo "File ID doesn't exist"
+                                DebugLog "File ID doesn't exist"
                             else
-                                log_file="$(sed ${file_id}'!d' ${log_list} | awk '{print $1}')"
-                                echo "log_file="${log_file}
-                                log_size="$(sed ${file_id}'!d' ${log_list} | awk '{print $2}')"
-                                echo "log_size="${log_size}
-                                loop_conf
+                                Filename="$(sed ${file_id}'!d' ${LogList} | awk '{print $1}')"
+                                DebugLog "Filename="${Filename}
+                                FileSize="$(sed ${file_id}'!d' ${LogList} | awk '{print $2}')"
+                                DebugLog "FileSize="${FileSize}
+                                LoopConf
 
-                                log_id=0
-                                while [ ${log_id} -le ${loop} ]; do
-                                    log_read_sub
-                                    cat ${screenlog}
-                                    echo "log_read OK"
-                                    log_export
-                                    log_id=$((${log_id}+1))                            
+                                LogId=0
+                                while [ ${LogId} -le ${Loop} ]; do
+                                    LogReadSub
+                                    cat ${ScreenLog}
+                                    DebugLog "LogRead OK"
+                                    LogExport
+                                    LogId=$((${LogId}+1))                            
                                 done
                             fi
                             ;;
 
-                ls )        grep -n . $log_list
+                ls )        grep -n . $LogList
                             ;;
 
-                [Nn] )      echo > ${screenlog}
-                            echo "log_ls exit"
-                            echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
+                [Nn] )      echo > ${ScreenLog}
+                            DebugLog "LogList exit"
+                            echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
                             exit
                             ;;
 
-                * )         echo "Please input file ID."
+                * )         DebugLog "Please input file ID."
                             ;;
             esac
         done
-    fi  
+    fi
+    echo > ${ScreenLog}
 }
 
-loop_conf() {
-    echo "loop_conf"
-    grep -w ${log_file} ${log_list}
-    log_size="$(grep -w ${log_file} ${log_list} | awk '{print $2}')"
-    echo "log_size="${log_size}
-    loop=$((${log_size} / ${max_log_size}))
-    echo "loop="${loop}
-    loop_remainder=$((${log_size} % ${max_log_size}))
-    echo "loop_remainder="${loop_remainder}
-}
-
-log_read_sub() {
-    echo "log_read_sub"
-    echo "log_id="${log_id}
-    echo 'Reading '${log_file}', please wait...' 2>&1 | tee ${openlog_state}
-
-    i='1'
-    if [ ${log_id} -gt ${loop} ]; then
-        echo -e "\nError: Invalid log ID"
-        exit
-    elif [ ${log_id} -lt ${loop} ]; then
-        screen -r -p 0 -X eval "stuff 'read ${log_file} $((${log_id} * ${max_log_size})) ${max_log_size}'\015"
-        ping -w ${read_timeout} 127.0.0.1 &> /dev/null
-        
-        while [ $(ls -l ${screenlog} | awk '{print $5}') -lt ${max_log_size} ]; do
-            echo 'Reading '${log_file}', please wait...'$(((${i} * 10) + ${read_timeout}))
-            ping -w 10 127.0.0.1 &> /dev/null
-            i=$((${i} + 1))
-        done
-
+LoopConf() {
+    DebugLog "Function: LoopConf"
+    grep -w ${Filename} ${LogList}
+    MemFree=$(($(cat /proc/meminfo | grep MemFree | awk '{print $2}') * 1024))
+    DebugLog "MemFree= "${MemFree}
+    if [ -z ${MaxFileSize_tmp} ]; then
+        MaxFileSize=$((${MemFree} / 3))
     else
-        screen -r -p 0 -X eval "stuff 'read ${log_file} $((${log_id} * ${max_log_size})) ${loop_remainder}'\015"
-        ping -w ${read_timeout} 127.0.0.1 &> /dev/null
-        
-        while [ $(ls -l ${screenlog} | awk '{print $5}') -lt ${loop_remainder} ]; do
-            echo 'Reading '${log_file}', please wait...'$(((${i} * 10) + ${read_timeout}))
-            ping -w 10 127.0.0.1 &> /dev/null
-            i=$((${i} + 1))
-        done
+        MaxFileSize=${MaxFileSize_tmp}
     fi
-    echo 'log_read_sub OK' 2>&1 | tee ${openlog_state}
+    DebugLog "MaxFileSize= "${MaxFileSize}
+    if [ ${MemFree} -le 10000000 ]; then
+        DebugLog "ERROR: Free memory is less than 10,000 kB, not enough free memory !!"
+        exit
+    elif [ ${MaxFileSize} -gt $((${MemFree} / 2)) ]; then
+        DebugLog "ERROR: MaxFileSize is too big, please decrease it !!"
+        exit
+    fi
 
+    FileSize="$(grep -w ${Filename} ${LogList} | awk '{print $2}')"
+    DebugLog "FileSize= $FileSize"
+    DebugLog "ReadStart= $ReadStart"
+    DebugLog "ReadEnd= $ReadEnd"
+    if [ -n "$ReadStart" -a -n "$ReadEnd" ]; then
+        if [ $ReadStart -eq 0 -a $ReadEnd -eq 0 ]; then
+            DebugLog "ReadStart= $ReadStart"
+            DebugLog "ReadEnd= $ReadEnd"
+        elif [ $ReadStart -ge $ReadEnd ]; then
+            DebugLog "ERROR: ReadStart must be less than ReadEnd !"
+            exit
+        elif [ $ReadStart -lt 0 ]; then
+            DebugLog "ERROR: ReadStart must be greater than 0 !"
+            exit
+        elif [ $ReadStart -ge $FileSize ]; then
+            DebugLog "ERROR: ReadStart must be less than Log file size !"
+            exit
+        elif [ $ReadEnd -gt $FileSize ]; then
+            DebugLog "ERROR: ReadEnd must be less than Log file size !"
+            exit
+        else
+            FileSize=$((${ReadEnd} - ${ReadStart}))
+            DebugLog "FileSize= "$FileSize
+        fi
+    elif [ -z "$ReadStart" -a -n "$ReadEnd" ]; then
+        DebugLog "ERROR: ReadStart not found !"
+        exit
+    elif [ -n "$ReadStart" -a -z "$ReadEnd" ]; then
+        DebugLog "ERROR: ReadEnd not found !"
+        exit
+    else
+        ReadStart=0
+        ReadEnd=0
+    fi
+    DebugLog "FileSize= "$FileSize
+    Loop=$((${FileSize} / ${MaxFileSize}))
+    DebugLog "Loop= "$Loop
+    LoopRemainder=$((${FileSize} % ${MaxFileSize}))
+    DebugLog "LoopRemainder= "$LoopRemainder
 }
 
-log_export() {
-    echo "log_export"
+LogReadSub() {
+    DebugLog "Function: LogReadSub"
+    DebugLog "LogId= ${LogId}"
+    DebugLog "Reading ${Filename}.${LogId}, please wait..."
+    echo > ${ScreenLog}
+    if [ ${LogId} -gt ${Loop} ]; then
+        DebugLog "ERROR: Invalid log ID"
+        exit
+    else
+        if [ ${LogId} -lt ${Loop} ]; then
+            ReadLength=${MaxFileSize}
+        else
+            ReadLength=${LoopRemainder}
+        fi
+        DebugLog "ReadLength= "$ReadLength
+        DebugLog "LogId= $LogId"
+        DebugLog "MaxFileSize= $MaxFileSize"
+        DebugLog "ReadStart= $ReadStart"
+        DebugLog "ReadEnd= $ReadEnd"
+        ReadStartTmp=$((${LogId} * ${MaxFileSize}))
+        DebugLog="ReadStartTmp.0= $ReadStartTmp"
+        ReadStartTmp=$(($ReadStartTmp + $ReadStart))
+        DebugLog="ReadStartTmp.1= $ReadStartTmp"
+        screen -r -p 0 -X eval "stuff 'read ${Filename} ${ReadStartTmp} ${ReadLength}'\015"
+        sleep ${ReadTimeout}
+        
+        while [ $(ls -l ${ScreenLog} | awk '{print $5}') -lt ${ReadLength} ] || [ $(tail -c 1 ${ScreenLog}) != ${EndChar} ]; do
+            DebugLog "Reading ${Filename}.${LogId}, "$(($(ls -l ${ScreenLog} | awk '{print $5}') * 100 / ${ReadLength}))"% completed."
+            sleep ${ReadTimeout}
+        done
+    fi
+    DebugLog "Reading ${Filename}.${LogId}, 100% completed."
+}
 
-    if [ ${log_file} = "EMPTY_FILENAME" ]; then
-        echo -e "\nError: -s FILENAME not found"
+LogExport() {
+    DebugLog "Function: LogExport"
+
+    if [ "${Filename}" = "EMPTY_FILENAME" ]; then
+        DebugLog "ERROR: -s FILENAME not found"
         exit
-    elif [ -z "${max_log_size}" ]; then
-        echo -e "\nError: -s MAX_LOG_SIZE not found"
-        exit
-    elif [ -z "${log_id}" ]; then
-        echo -e "\nError: -i LOG_INDEX not found"
+    elif [ -z "${LogId}" ]; then
+        DebugLog "ERROR: -i LOG_INDEX not found"
         exit
     fi
 
-    check_console_status
+    ConsoleEnable
     
-    if [ ${COMM_MODE} = '1' ]; then
-        log_ls
-        if [ -z "$(grep -w ${log_file} ${log_list})" ]; then
-            echo -e "\nError: Invalid filename"
+    if [ ${Mode} = '1' ]; then
+        LogList
+        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+            DebugLog "ERROR: Invalid FILENAME"
         else
-            loop_conf
-            log_read_sub
-            log_export_sub
+            LoopConf
+            LogReadSub
+            LogExportSub
         fi
-    elif [ ${COMM_MODE} = '0' ]; then
+    elif [ ${Mode} = '0' ]; then
         while true; do
-            read -p "Do you want to export "${log_file}"? (y/n) " yn
+            read -p "Do you want to export "${Filename}"? (y/n) " yn
             case $yn in
-                [Yy] )      log_export_sub
+                [Yy] )      LogExportSub
                             break;;
 
-                [Nn] )      echo "log_export exit"
+                [Nn] )      DebugLog "LogExport exit"
                             break;;
 
-                * )         echo "Please input Y/y or N/n.";;
+                * )         DebugLog "Please input Y/y or N/n.";;
             esac
         done
     fi 
 
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
-    echo "log_export OK"   
+#    echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+#    echo "LogExport OK"   
 }
 
-log_export_sub() {
-    echo "log_export_sub"
-    log_filename=$(echo "openlog_LOG_"${MAC}"_"${log_file}"."${log_id}"_"${record_time})
-    echo "log_filename="${log_filename}
-    echo "Exporting "${log_file}" to /tmp/"${log_filename}".gz, please wait..."
-    gzip -c ${screenlog} > /tmp/${log_filename}.gz
-    echo "/tmp/"${log_filename}".gz file size="$(ls -l /tmp/${log_filename}.gz | awk '{print $5}')" bytes"
-    cat /proc/meminfo |grep MemFree
-    echo > ${screenlog}
+LogExportSub() {
+    DebugLog "Function: LogExportSub"
+#    echo "ExportTime="${ExportTime}
+    EXPORT_FILENAME=$(echo ${MAC}"_"${Filename}"."${LogId}"_"${ExportTime})
+#    echo "EXPORT_FILENAME="${EXPORT_FILENAME}
+    DebugLog "Exporting "${Filename}" to /tmp/"${EXPORT_FILENAME}".gz, please wait..."
+    gzip -c ${ScreenLog} > /tmp/${EXPORT_FILENAME}.gz
+    DebugLog "/tmp/"${EXPORT_FILENAME}".gz file size="$(ls -l /tmp/${EXPORT_FILENAME}.gz | awk '{print $5}')" bytes"
+    DebugLog $(cat /proc/meminfo |grep MemFree 2>&1 | tee ${OpenlogState})
+    echo > ${ScreenLog}
 }
 
-log_delete() {
-    echo 'log_delete'
-    check_console_status
-
-    if [ ${COMM_MODE} = '1' ]; then
-        log_ls
-        if [ ${log_file} = "all" ]; then
-            cat ${log_list} | awk '{print $1}' | while read output
+LogDelete() {
+    DebugLog 'Function: LogDelete'
+    if [ ${Mode} = '1' ]; then
+        [ "$ACTION" != "auto" ] && LogList
+        if [ ${Filename} = "all" ]; then
+            cat ${LogList} | awk '{print $1}' | while read output
             do
             if [ $output != "" ]; then
-                echo "Deleting "${output}, "please wait..."
+                DebugLog "Deleting "${output}, "please wait..."
                 screen -r -p 0 -X eval "stuff 'rm ${output}'\015"
-                ping -w 1 127.0.0.1 &> /dev/null
+                sleep 1
             fi
             done
-            reset
-        elif [ -z "$(grep -w ${log_file} ${log_list})" ]; then
-            echo -e "\nError: Invalid filename"
+        elif [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+            DebugLog "ERROR: Invalid FILENAME"
         else
-            grep -w ${log_file} ${log_list}
-            echo 'Deleting '${log_file}', please wait...'
-            screen -r -p 0 -X eval "stuff 'rm ${log_file}'\015"
-            ping -w 1 127.0.0.1 &> /dev/null
+            grep -w ${Filename} ${LogList}
+            DebugLog "Deleting '${Filename}', please wait..."
+            screen -r -p 0 -X eval "stuff 'rm ${Filename}'\015"
+            sleep 1
         fi
-    elif [ ${COMM_MODE} = '0' ]; then
+    elif [ ${Mode} = '0' ]; then
         while true; do
-            log_ls
+            LogList
             #http://stackoverflow.com/questions/226703/how-do-i-prompt-for-input-in-a-linux-shell-script 
             read -p "Which file ID you want to delete ? (Input \"all\" for delete all log files or N/n for exit) " file_id
             case $file_id in
-                [0-9]* )    echo "file_id="$file_id
-                            if [ $file_id = '0' ] || [ $file_id -gt $file_num ] ; then
-                                echo "File ID doesn't exist"
+                [0-9]* )    #echo "file_id="$file_id
+                            if [ $file_id = '0' ] || [ $file_id -gt $file_num ]; then
+                                DebugLog "File ID doesn't exist"
                             else
-                                log_file="$(sed ${file_id}'!d' ${log_list} | awk '{print $1}')"
-                                echo "log_file="${log_file}
-                                echo 'Deleting '${log_file}', please wait...'
-                                screen -r -p 0 -X eval "stuff 'rm ${log_file}'\015"
-                                ping -w 1 127.0.0.1 &> /dev/null
-                                echo > ${screenlog}
-                                echo "log_delete OK"
+                                Filename="$(sed ${file_id}'!d' ${LogList} | awk '{print $1}')"
+                                #echo "Filename="${Filename}
+                                DebugLog "Deleting '${Filename}', please wait..."
+                                screen -r -p 0 -X eval "stuff 'rm ${Filename}'\015"
+                                sleep 1
+                                echo > ${ScreenLog}
+#                                echo "LogDelete OK"
                             fi
                             ;;
-                all )   cat ${log_list} | awk '{print $1}' | while read output
+                all )   cat ${LogList} | awk '{print $1}' | while read output
                             do
                                 if [ $output != "" ]; then
-                                    echo "Deleting "${output}, "please wait..."
+                                    DebugLog "Deleting "${output}, "please wait..."
                                     screen -r -p 0 -X eval "stuff 'rm ${output}'\015"
-                                    ping -w 1 127.0.0.1 &> /dev/null
+                                    sleep 1
                                 fi
                             done
-                            reset
+                            LogReset
                             break
                             ;;
-                [Nn] )      echo "log_delete exit"
+                [Nn] )      DebugLog "LogDelete exit"
                             break
                             ;;
-                * )         echo "Please input file ID."
+                * )         DebugLog "Please input file ID."
                             ;;
             esac
         done
     fi
 
-    echo > ${screenlog}
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
-    echo "log_delete OK"
+    echo > ${ScreenLog}
+#    echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+#    echo "LogDelete OK"
 }
 
-reset() {
-    echo "reset"
-    check_console_status
+LogReset() {
+    DebugLog "Function: LogReset"
+    CheckConsoleStatus
 
-    echo > ${screenlog}
+    echo > ${ScreenLog}
     screen -r -p 0 -X eval 'stuff set\015'
-    ping -w 5 127.0.0.1 &> /dev/null
+    sleep 1
     screen -r -p 0 -X eval 'stuff 4\015'
-    echo "reset OK"
-    echo -e "Remember to run \"sh "$0" disable\" when finished using "$0
+    DebugLog "LogReset OK"
+#    echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
 }
 
-auto_export_upload() {
-    echo "auto_export_upload"
-    if [ $COMM_MODE != "1" ]; then
-        echo "COMM_MODE must be 1"
-        exit
-    fi
-    
-    record_time=$(date +"%Y%m%d%H%M%S")
-    echo "Record time="$(date +"%Y%m%d%H%M%S")
-
-    console_enable
-    log_ls
-
-    cat ${log_list} | awk '{print $1}' | while read output
-    do
-        if [ $output != "" ]; then
-            echo "Exporting and Uploading "${output}, "please wait..."
-            log_file=${output}
-            log_id='0'
-            while [ ${log_id} -le ${loop} ]; do
-                echo "log_id="${log_id}
-                loop_conf
-                log_read_sub
-                log_export_sub
-                tftp_upload
-                log_id=$((${log_id}+1))                            
-            done     
+TftpUpload()
+{
+    DebugLog "Function: TftpUpload"
+    UPLOAD_FILENAME=$(echo ${EXPORT_FILENAME}".gz")
+    DebugLog "Uploading ${UPLOAD_FILENAME}..."
+    cd /tmp
+    local i=0
+    #TftpResult=$(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv})
+    #DebugLog "TftpResult= $TftpResult"
+#    if $(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv}); then
+#        DebugLog "Upload ${UPLOAD_FILENAME} successfully"
+#    elif ! $(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv}); then
+#        DebugLog "ERROR: Upload ${UPLOAD_FILENAME} failed"
+#        exit
+#    fi
+    while ! $(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv}); do
+        i=$(($i+1))
+        DebugLog "Upload ${UPLOAD_FILENAME} failed, Retry.$i"
+        sleep 1
+        if [ $i -ge 5 ]; then
+            DebugLog "ERROR: Upload ${UPLOAD_FILENAME} failed"
+            exit
         fi
     done
-    
-    #log_file="all"
-    #log_delete
-    #reset
-    #console_disable  
+    DebugLog "Upload ${UPLOAD_FILENAME} successfully"
+    rm ${UPLOAD_FILENAME}
 }
 
-tftp_upload()
-{
-    cd /tmp
-    tftp -p -l ${log_filename} ${tftp_srv}
-    rm /tmp/${log_filename}
+Auto() {
+    DebugLog "Function: Auto"
+    if [ $Mode != "1" ]; then
+        DebugLog "Mode must be 1"
+        exit
+    fi
+
+    LogList
+
+    if [ "$Filename" != "EMPTY_FILENAME" ]; then
+        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+            DebugLog "ERROR: Invalid FILENAME"
+            exit
+        else
+            LogId=0
+            LoopConf
+            while [ ${LogId} -le ${Loop} ]; do
+                DebugLog "LogId= "${LogId}
+                LogReadSub
+                LogExportSub
+                TftpUpload
+                LogId=$((${LogId}+1))
+            done
+        fi
+    else
+        cat ${LogList} | awk '{print $1}' | while read output; do
+            if [ $output != "" ]; then
+                Filename=${output}
+                LogId=0
+                LoopConf
+                while [ ${LogId} -le ${Loop} ]; do
+                    DebugLog "LogId="${LogId}
+                    LogReadSub
+                    LogExportSub
+                    TftpUpload
+                    LogId=$((${LogId}+1))                            
+                done     
+            fi
+        done
+        Filename="all"
+        LogDelete
+        LogReset
+    fi
+    ConsoleDisable  
 }
 
-log_help() {
-    echo -e "\nUsage: sh "$0" -c COMM_MODE -a ACTION [-s MAX_LOG_SIZE] [-f FILENAME] [-i LOG_INDEX] [-t TIMEOUT]"
-    echo -e "-c : COMM_MODE"
-    echo -e "  1                Command mode"
-    echo -e "  0                Interactive mode"
-    echo -e "-a : ACTION"
+CatFileList() {
+    cat $LogList
+}
+
+LogHelp() {
+#    echo -e "\nUsage: sh "$0" --Mode Mode --action ACTION [--maxfilesize MaxFileSize] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
+    echo -e "\nUsage: sh "$0" --action ACTION [--Mode Mode] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
+    echo -e "--action : ACTION"
     echo -e "  enable           Enable openlog console"
     echo -e "  disable          Disable openlog console"
     echo -e "  status           Show openlog console status"
-    echo -e "  ls               List log files"
-    echo -e "  read             Read log file. <sh "$0" -a read -s MAX_LOG_SIZE>"
-    echo -e "  export           Export log file. Only available for command COMM_MODE (-c 0)"
+    echo -e "  list             List log files"
+    echo -e "  read             Read log file. <sh "$0" -a read -s MaxFileSize>"
+    echo -e "  export           Export log file. Only available for command Mode (-c 0)"
     echo -e "  delete           Delete log file"
-    echo -e "  reset            Reset log file index to 0"
+    echo -e "  LogReset            LogReset log file index to 0"
     echo -e "  auto             Automatically enable openlog console, export all logs, upload to tftp server, delete uploaded logs from SD card, and disable console"
-    echo -e "-s : MAX_LOG_SIZE (required when -a read/export)"
-    echo -e "                   MAX_LOG_SIZE is the max. size (byes) of each log file."
-    echo -e "                   Specifying the value carefully to avoid log file is too big to free memory"
-    echo -e "-f : FILENAME"
-    echo -e "                   Log filename to read/delete/export."
+    #echo -e "--Mode : Mode"
+    #echo -e "  1                Command Mode"
+    #echo -e "  0                Interactive Mode"
+    echo -e "--maxfilesize : MaxFileSize"
+    echo -e "                   MaxFileSize is the max. size (byes) of each log file."
+    echo -e "                   Specifying the value carefully to avoid log file is too big for free memory"
+    echo -e "--Filename : FILENAME"
+    echo -e "                   Log FILENAME to read/delete/export."
     echo -e "                   Using \"all\" can delete all log files when ACTION is \"delete\" (-a delete)" 
-    echo -e "-i : LOG_INDEX (required when -a export)"
+    echo -e "--logid : LOG_INDEX (required when --action export)"
     echo -e "                   Log index to export"
-    echo -e "-t : TIMEOUT (default: 15 secs)"
-    echo -e "                   Timeout for reading log. Extend the timeout if log is not completed"
-    echo -e "-u : Upload TFTP SERVER (default: diagnosis.engeniusnetworks.com)"
-    echo -e "                   IP or hostname for tftp server"
+    echo -e "--readstart : ReadStart (required enter with --readend)"
+    echo -e "                   start byte of log to read"
+    echo -e "--readend : ReadEnd (required enter with --readstart)"
+    echo -e "                   End byte of log to read" 
+    echo -e "--tftpsrv : TftpSrv (default: diagnosis.engeniusnetworks.com)"
+    echo -e "                   IP or hostname of tftp server for uploading log"
 }
 
-while getopts “c:a:s:f:i:t:u:?” argv
+Debuglvl=1
+DebugLog "####################################"
+DebugLog "######## openlog Main START ########"
+DebugLog "####################################"
+
+ps | grep $0 | grep -v grep> $OpenlogState
+    DebugLog "ProcessNum = $(cat $OpenlogState | wc -l)"
+if [ $(cat $OpenlogState | wc -l) -gt 1 ]; then
+    DebugLog "[$(date +"%Y/%m/%d %H:%M:%S")] ProcessNum = $(cat $OpenlogState | wc -l)"
+    DebugLog "[$(date +"%Y/%m/%d %H:%M:%S")] ERROR: Another openlog.sh process is running !"
+    exit
+fi
+#Debuglvl=0
+
+echo > $ScreenLog
+[ $(ls -l $OpenlogDebugLog | awk '{print $5}') -ge 3000000 ] && rm $OpenlogDebugLog
+
+while [[ $# -ge 1 ]]
 do
+    argv="$1"
     case $argv in
-        c)  COMM_MODE=$OPTARG
-            echo "COMM_MODE="${COMM_MODE}
-            if [ ${COMM_MODE} != "0" -a ${COMM_MODE} != "1" ]; then
-                echo -e "Error: Invalid COMM_MODE"
-                exit
-            fi
+#        --Mode)
+#            Mode="$2"
+#            echo "Mode="${Mode}
+#            if [ ${Mode} != "0" -a ${Mode} != "1" ]; then
+#                echo -e "ERROR: Invalid Mode"
+#                exit
+#            fi
+#            shift 2
+#            ;;
+        --action)
+            ACTION="$2"
+            shift 2
             ;;
-        a)  ACTION=$OPTARG
-            echo "ACTION="$ACTION
-            ;;
-        s)  max_log_size=$OPTARG
-            echo "max_log_size="${max_log_size}
-            case ${max_log_size} in
-                ''|*[!0-9]*)    echo -e "\nError: MAX_LOG_SIZE is not a number\n"
+        --maxfilesize)
+            MaxFileSize_tmp="$2"
+            case ${MaxFileSize_tmp} in
+                ''|*[!0-9]*)    DebugLog "ERROR: MaxFileSize is not a number\n"
                                 exit
                                 ;;
-                *)              if [ ${max_log_size} -le 0 ]; then
-                                    echo -e "\nError: MAX_LOG_SIZE must larger than 0\n"
+                *)              if [ ${MaxFileSize_tmp} -le 0 ]; then
+                                    DebugLog "ERROR: MaxFileSize must be more than 0"
                                     exit
                                 fi
                                 ;;
             esac
+            shift 2
             ;;
-        f)  log_file=$OPTARG
-            echo "log_file="${log_file}
+        --filename)
+            Filename="$2"
+            shift 2
             ;;
-        i)  log_id=$OPTARG
-            echo "log_id="${log_id}
-            case ${log_id} in
-                ''|*[!0-9]*)    echo -e "\nError: LOG_INDEX is not a number\n"
+        --logid)
+            LogId="$2"
+            case ${LogId} in
+                ''|*[!0-9]*)    DebugLog "ERROR: LOG_INDEX is not a number"
+                                exit
+                                ;;
+                *)
+                                ;;
+            esac
+            shift 2
+            ;;
+        --tftpsrv)
+            TftpSrv="$2"
+            shift 2
+            ;;
+        --readstart)
+            ReadStart="$2"
+            case ${ReadStart} in
+                ''|*[!0-9]*)    DebugLog "ERROR: ReadStart is not a number"
                                 exit
                                 ;;
                 *)              
                                 ;;
             esac
+            shift 2
             ;;
-        t)  read_timeout=$OPTARG
-            echo "timeout="${read_timeout}
-            case ${read_timeout} in
-                ''|*[!0-9]*)    echo -e "\nError: TIMEOUT is not a number\n"
+        --readend)
+            ReadEnd="$2"
+            case ${ReadEnd} in
+                ''|*[!0-9]*)    DebugLog "ERROR: ReadEnd is not a number"
                                 exit
                                 ;;
                 *)              
                                 ;;
             esac
+            shift 2
             ;;
-        u)  tftp_srv=$OPTARG
-            echo "tftp_srv="${tftp_srv}
+        -v)
+            Debuglvl=1
+            shift 1
             ;;
-        ?)  log_help
+        -h|--help)
+            LogHelp
+            exit
+            ;;
+        *)
+            DebugLog "Invalid argument"
             exit
             ;;
     esac
 done
 
 case $ACTION in
-    enable )                console_enable
-                            ;;
-    disable )               console_disable
-                            ;;
-    status )                show_console_status
-                            ;;
-    ls )                    log_ls
-                            ;;
-    read )                  log_read
-                            ;;
-    export )                log_export
-                            ;;
-    delete )                log_delete
-                            ;;
-    reset )                 reset
-                            ;;   
-    auto )                  auto_export_upload
-                            ;;
-
-    "")                     log_help
-                            ;;
-    * )                     echo -e "\nError: Invalid action"
-                            ;;
-esac    
+    enable)
+        ConsoleEnable
+        ;;
+    disable)
+        ConsoleDisable
+        ;;
+    status)
+        CheckConsoleStatus
+        ;;
+    list)
+        LogList
+        ;;
+    read)
+        LogRead
+        ;;
+    export)
+        LogExport
+        ;;
+    delete)
+        LogDelete
+        ;;
+    reset)
+        LogReset
+        ;;
+    show)
+        CatFileList
+        ;;
+#    upload)
+#        TftpUpload
+#        ;;   
+    auto)
+        Auto
+        ;;
+    * )
+        DebugLog "ERROR: Invalid action"
+        ;;
+esac
+DebugLog "######## openlog Main END ########"

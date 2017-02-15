@@ -2,7 +2,7 @@
 
 #prints each command before it executes. enable: set -o xtrace , disable: set +o xtrace
 #set -o xtrace
-OpenlogVersion="1.0.1"
+OpenlogVersion="1.0.2"
 Inittab=/etc/inittab
 ScreenConfig=/etc/screenrc
 ScreenLog=/tmp/screenlog.0
@@ -685,7 +685,7 @@ LogHelp() {
 #    echo -e "\nUsage: sh "$0" --Mode Mode --action ACTION [--maxfilesize MaxFileSize] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
     echo -e "\nUsage: sh "$0" --action ACTION [--Mode Mode] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
     echo -e "--action : ACTION"
-    echo -e "  checkstorage     "
+    echo -e "  checkstorage     Delete log if log size > $MaxStoreSize bytes"
     echo -e "  enable           Enable openlog console"
     echo -e "  disable          Disable openlog console"
     echo -e "  status           Show openlog console status"

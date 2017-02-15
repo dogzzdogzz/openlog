@@ -680,6 +680,20 @@ SetTimeZone() {
     ExportTime=$(date +"%Y%m%d_%H%M%S")
 }
 
+Update() {
+    while ! $(tftp -gr $0 ${TftpSrv}); do
+        i=$(($i+1))
+        DebugLog "Update $0 failed, Retry.$i"
+        sleep 1
+        if [ $i -ge 5 ]; then
+            DebugLog "ERROR: Update $0 failed"
+            exit
+        fi
+    done
+    DebugLog "Update $0 successfully"
+    exit
+}
+
 LogHelp() {
     echo -e "\nopenlog version: $OpenlogVersion"
 #    echo -e "\nUsage: sh "$0" --Mode Mode --action ACTION [--maxfilesize MaxFileSize] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
@@ -809,6 +823,10 @@ do
             TimeZone="$2"
             SetTimeZone
             shift 2
+            ;;
+        --update)
+            Update
+            shift 1
             ;;
         -v)
             Debuglvl=1

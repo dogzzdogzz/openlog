@@ -2,11 +2,11 @@
 
 #prints each command before it executes. enable: set -o xtrace , disable: set +o xtrace
 #set -o xtrace
-
+OpenlogVersion="1.0.1"
 Inittab=/etc/inittab
 ScreenConfig=/etc/screenrc
 ScreenLog=/tmp/screenlog.0
-LogList=/tmp/openlog_list
+LOGLIST=/tmp/openlog_list
 Terminal=/dev/ttyS0
 OpenlogState=/tmp/openlogstate
 OpenlogDebugLog=/tmp/openlog_debugLog
@@ -18,6 +18,8 @@ TftpSrv=diagnosis.engeniusnetworks.com
 ExportTime=$(date +"%Y%m%d_%H%M%S")
 EndChar=">"
 EscapeChar="2<"
+RunLogList=0
+MaxStoreSize=10000000000
 
 DebugLog() {
     if [ $Debuglvl -eq 1 ]; then
@@ -71,7 +73,7 @@ ConsoleEnable() {
         screen -r -p 0 -X eval 'stuff q4\015\015\015\015\015\015\015\015\015\015\015'
         sleep 2
         echo -e '::sysinit:/etc/init.d/rcS S boot\n::shutdown:/etc/init.d/rcS K shutdown\nttyS0::askfirst:/bin/login' > ${Inittab}
-        #echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0ca
+        #echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
         
         i=0
         while [ $i -lt 15 ]; do
@@ -118,9 +120,14 @@ ConsoleDisable() {
         fi
         i=$(($i+1))
     done
+
+    if [ $(ls -l $OpenlogDebugLog | grep -v .gz | awk '{print $5}') -gt 1000000 ]; then
+        rm ${OpenlogDebugLog}.gz
+        gzip ${OpenlogDebugLog}
+    fi
 }
 
-CheckConsoleStatus(){
+CheckConsoleStatus() {
     DebugLog "Function: CheckConsoleStatus"
     screen -r -p 0 -X eval 'stuff q0\015'
     local i=0
@@ -155,29 +162,32 @@ CheckConsoleStatus(){
 
 LogList() {
     DebugLog "Function: LogList"
-    ConsoleEnable
+    DebugLog "RunLogList= "$RunLogList
+    if [ $RunLogList != 1 ]; then
+        ConsoleEnable
+        echo > ${ScreenLog}
+        screen -r -p 0 -X eval 'stuff ls\015'
+        #echo -e "ls\015" > ${Terminal}
+        local i=0
+        while [ "$(tail -1 ${ScreenLog})" != ">" ]; do
+            DebugLog "Reading file list, please wait...$i"
+            sleep 1
+            i=`expr $i + 1`
+            if [ $i -gt 60 ]; then
+                DebugLog "ERROR: Failed to read file list, please try again"
+                exit
+            fi
+        done
+        grep LOG ${ScreenLog} | grep -v "    LOG" | grep -v "_LOG" > ${LOGLIST}
 
-    echo > ${ScreenLog}
-    screen -r -p 0 -X eval 'stuff ls\015'
-    #echo -e "ls\015" > ${Terminal}
-    local i=0
-    while [ "$(tail -1 ${ScreenLog})" != ">" ]; do
-        DebugLog "Reading file list, please wait...$i"
-        sleep 1
-        i=`expr $i + 1`
-        if [ $i -gt 60 ]; then
-            DebugLog "ERROR: Failed to read file list, please try again"
-            exit
-        fi
-    done
-    grep LOG ${ScreenLog} | grep -v "    LOG" | grep -v "_LOG" > ${LogList}
-
-    file_num=$(wc -l < ${LogList})
-    DebugLog "file_num="$file_num
-    echo "ID:Name          Size"
-    grep -n . ${LogList} 2>&1 | tee -a ${OpenlogDebugLog} 
-#    echo > ${ScreenLog}
-#    echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+        file_num=$(wc -l < ${LOGLIST})
+        DebugLog "file_num="$file_num
+        echo "ID:Name          Size"
+        grep -n . ${LOGLIST} 2>&1 | tee -a ${OpenlogDebugLog} 
+        #echo > ${ScreenLog}
+        #echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
+    fi
+    RunLogList=1
     DebugLog "LogList OK"
 }
 
@@ -190,7 +200,7 @@ LogRead() {
             exit
         fi
         LogList   
-        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+        if [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
             exit
         else
@@ -221,9 +231,9 @@ LogRead() {
                             if [ ${file_id} = '0' ] || [ ${file_id} -gt ${file_num} ] ; then
                                 DebugLog "File ID doesn't exist"
                             else
-                                Filename="$(sed ${file_id}'!d' ${LogList} | awk '{print $1}')"
+                                Filename="$(sed ${file_id}'!d' ${LOGLIST} | awk '{print $1}')"
                                 DebugLog "Filename="${Filename}
-                                FileSize="$(sed ${file_id}'!d' ${LogList} | awk '{print $2}')"
+                                FileSize="$(sed ${file_id}'!d' ${LOGLIST} | awk '{print $2}')"
                                 DebugLog "FileSize="${FileSize}
                                 LoopConf
 
@@ -238,7 +248,7 @@ LogRead() {
                             fi
                             ;;
 
-                ls )        grep -n . $LogList
+                ls )        grep -n . ${LOGLIST}
                             ;;
 
                 [Nn] )      echo > ${ScreenLog}
@@ -257,7 +267,7 @@ LogRead() {
 
 LoopConf() {
     DebugLog "Function: LoopConf"
-    grep -w ${Filename} ${LogList}
+    grep -w ${Filename} ${LOGLIST}
     MemFree=$(($(cat /proc/meminfo | grep MemFree | awk '{print $2}') * 1024))
     DebugLog "MemFree= "${MemFree}
     if [ -z ${MaxFileSize_tmp} ]; then
@@ -274,7 +284,7 @@ LoopConf() {
         exit
     fi
 
-    FileSize="$(grep -w ${Filename} ${LogList} | awk '{print $2}')"
+    FileSize="$(grep -w ${Filename} ${LOGLIST} | awk '{print $2}')"
     DebugLog "FileSize= $FileSize"
     DebugLog "ReadStart= $ReadStart"
     DebugLog "ReadEnd= $ReadEnd"
@@ -364,7 +374,7 @@ LogExport() {
     
     if [ ${Mode} = '1' ]; then
         LogList
-        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+        if [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
         else
             LoopConf
@@ -407,18 +417,19 @@ LogDelete() {
     if [ ${Mode} = '1' ]; then
         [ "$ACTION" != "auto" ] && LogList
         if [ ${Filename} = "all" ]; then
-            cat ${LogList} | awk '{print $1}' | while read output
+            while read output
             do
-            if [ $output != "" ]; then
-                DebugLog "Deleting "${output}, "please wait..."
-                screen -r -p 0 -X eval "stuff 'rm ${output}'\015"
-                sleep 1
-            fi
-            done
-        elif [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+                output2=$(echo $output | awk '{print $1}')
+                if [ $output2 != "" ]; then
+                    DebugLog "Deleting "${output2}, "please wait..."
+                    screen -r -p 0 -X eval "stuff 'rm ${output2}'\015"
+                    sleep 1
+                fi
+            done < ${LOGLIST}
+        elif [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
         else
-            grep -w ${Filename} ${LogList}
+            grep -w ${Filename} ${LOGLIST}
             DebugLog "Deleting '${Filename}', please wait..."
             screen -r -p 0 -X eval "stuff 'rm ${Filename}'\015"
             sleep 1
@@ -433,7 +444,7 @@ LogDelete() {
                             if [ $file_id = '0' ] || [ $file_id -gt $file_num ]; then
                                 DebugLog "File ID doesn't exist"
                             else
-                                Filename="$(sed ${file_id}'!d' ${LogList} | awk '{print $1}')"
+                                Filename="$(sed ${file_id}'!d' ${LOGLIST} | awk '{print $1}')"
                                 #echo "Filename="${Filename}
                                 DebugLog "Deleting '${Filename}', please wait..."
                                 screen -r -p 0 -X eval "stuff 'rm ${Filename}'\015"
@@ -442,14 +453,15 @@ LogDelete() {
 #                                echo "LogDelete OK"
                             fi
                             ;;
-                all )   cat ${LogList} | awk '{print $1}' | while read output
+                all )       while read output
                             do
-                                if [ $output != "" ]; then
-                                    DebugLog "Deleting "${output}, "please wait..."
-                                    screen -r -p 0 -X eval "stuff 'rm ${output}'\015"
+                                output2=$(echo $output | awk '{print $1}')
+                                if [ $output2 != "" ]; then
+                                    DebugLog "Deleting "${output2}, "please wait..."
+                                    screen -r -p 0 -X eval "stuff 'rm ${output2}'\015"
                                     sleep 1
                                 fi
-                            done
+                            done < ${LOGLIST}
                             LogReset
                             break
                             ;;
@@ -517,7 +529,7 @@ Auto() {
     LogList
 
     if [ "$Filename" != "EMPTY_FILENAME" ]; then
-        if [ -z "$(grep -w ${Filename} ${LogList})" ]; then
+        if [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
             exit
         else
@@ -532,9 +544,10 @@ Auto() {
             done
         fi
     else
-        cat ${LogList} | awk '{print $1}' | while read output; do
-            if [ $output != "" ]; then
-                Filename=${output}
+         while read output; do
+            output2=$(echo $output | awk '{print $1}')
+            if [ $output2 != "" ]; then
+                Filename=${output2}
                 LogId=0
                 LoopConf
                 while [ ${LogId} -le ${Loop} ]; do
@@ -545,22 +558,134 @@ Auto() {
                     LogId=$((${LogId}+1))                            
                 done     
             fi
-        done
+        done < ${LOGLIST}
         Filename="all"
         LogDelete
         LogReset
     fi
-    ConsoleDisable  
+    ConsoleDisable
 }
 
 CatFileList() {
-    cat $LogList
+    cat ${LOGLIST}
+}
+
+CheckStorage() {
+    LogList
+    if [ -f ${LOGLIST} ]; then
+        TotalSize=0
+        while read output
+        do
+                DebugLog "FileSize="${output}
+                TotalSize=`expr $TotalSize + $(echo $output | awk '{print $2}')`
+                DebugLog "TotalSize="${TotalSize}
+        done < ${LOGLIST}
+        DebugLog "TotalSize="${TotalSize}
+        if [ $TotalSize -gt $MaxStoreSize ]; then
+            Filename="all"
+            DebugLog "TotalSize greater than $MaxStoreSize bytes"
+            LogDelete
+            LogReset
+        fi
+    else
+        DebugLog "ERROR: ${LOGLIST} not found !!"
+    fi
+    ConsoleDisable
+}
+
+SetTimeZone() {
+    DebugLog "Function: SetTimeZone"
+    case $TimeZone in
+        -12)
+            echo "UTC12" > /tmp/TZ
+            ;;
+        -11)
+            echo "UTC11" > /tmp/TZ
+            ;;
+        -10)
+            echo "UTC10" > /tmp/TZ
+            ;;
+        -9)
+            echo "UTC9" > /tmp/TZ
+            ;;
+        -8)
+            echo "UTC8" > /tmp/TZ
+            ;;
+        -7)
+            echo "UTC7" > /tmp/TZ
+            ;;
+        -6)
+            echo "UTC6" > /tmp/TZ
+            ;;
+        -5)
+            echo "UTC5" > /tmp/TZ
+            ;;
+        -4)
+            echo "UTC4" > /tmp/TZ
+            ;;
+        -3)
+            echo "UTC3" > /tmp/TZ
+            ;;
+        -2)
+            echo "UTC2" > /tmp/TZ
+            ;;
+        -1)
+            echo "UTC1" > /tmp/TZ
+            ;;
+        0)
+            echo "UTC0" > /tmp/TZ
+            ;;
+        +12)
+            echo "UTC-12" > /tmp/TZ
+            ;;
+        +11)
+            echo "UTC-11" > /tmp/TZ
+            ;;
+        +10)
+            echo "UTC-10" > /tmp/TZ
+            ;;
+        +9)
+            echo "UTC-9" > /tmp/TZ
+            ;;
+        +8)
+            echo "UTC-8" > /tmp/TZ
+            ;;
+        +7)
+            echo "UTC-7" > /tmp/TZ
+            ;;
+        +6)
+            echo "UTC-6" > /tmp/TZ
+            ;;
+        +5)
+            echo "UTC-5" > /tmp/TZ
+            ;;
+        +4)
+            echo "UTC-4" > /tmp/TZ
+            ;;
+        +3)
+            echo "UTC-3" > /tmp/TZ
+            ;;
+        +2)
+            echo "UTC-2" > /tmp/TZ
+            ;;
+        +1)
+            echo "UTC-1" > /tmp/TZ
+            ;;
+        *)
+            DebugLog "Invalid argument"
+            exit
+            ;;
+    esac
+    DebugLog "$(date)"
+    ExportTime=$(date +"%Y%m%d_%H%M%S")
 }
 
 LogHelp() {
+    echo -e "\nopenlog version: $OpenlogVersion"
 #    echo -e "\nUsage: sh "$0" --Mode Mode --action ACTION [--maxfilesize MaxFileSize] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
     echo -e "\nUsage: sh "$0" --action ACTION [--Mode Mode] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
     echo -e "--action : ACTION"
+    echo -e "  checkstorage     "
     echo -e "  enable           Enable openlog console"
     echo -e "  disable          Disable openlog console"
     echo -e "  status           Show openlog console status"
@@ -568,7 +693,7 @@ LogHelp() {
     echo -e "  read             Read log file. <sh "$0" -a read -s MaxFileSize>"
     echo -e "  export           Export log file. Only available for command Mode (-c 0)"
     echo -e "  delete           Delete log file"
-    echo -e "  LogReset            LogReset log file index to 0"
+    echo -e "  LogReset         Reset log file index to 0"
     echo -e "  auto             Automatically enable openlog console, export all logs, upload to tftp server, delete uploaded logs from SD card, and disable console"
     #echo -e "--Mode : Mode"
     #echo -e "  1                Command Mode"
@@ -587,6 +712,8 @@ LogHelp() {
     echo -e "                   End byte of log to read" 
     echo -e "--tftpsrv : TftpSrv (default: diagnosis.engeniusnetworks.com)"
     echo -e "                   IP or hostname of tftp server for uploading log"
+    echo -e "--timezone : Set AP timezone"
+    echo -e "                   -8, +8, 0"
 }
 
 Debuglvl=1
@@ -594,7 +721,7 @@ DebugLog "####################################"
 DebugLog "######## openlog Main START ########"
 DebugLog "####################################"
 
-ps | grep $0 | grep -v grep> $OpenlogState
+ps | grep $0 | grep -v grep | grep -v "/bin/sh" > $OpenlogState
     DebugLog "ProcessNum = $(cat $OpenlogState | wc -l)"
 if [ $(cat $OpenlogState | wc -l) -gt 1 ]; then
     DebugLog "[$(date +"%Y/%m/%d %H:%M:%S")] ProcessNum = $(cat $OpenlogState | wc -l)"
@@ -678,6 +805,11 @@ do
             esac
             shift 2
             ;;
+        --timezone)
+            TimeZone="$2"
+            SetTimeZone
+            shift 2
+            ;;
         -v)
             Debuglvl=1
             shift 1
@@ -694,6 +826,9 @@ do
 done
 
 case $ACTION in
+    checkstorage)
+        CheckStorage
+        ;;
     enable)
         ConsoleEnable
         ;;

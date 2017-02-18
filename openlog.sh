@@ -678,7 +678,6 @@ SetTimeZone() {
 
 Update() {
     DebugLog "Function: Update"
-#    while ! $(tftp -gr $OpenlogFilename ${TftpSrv}); do
     while ! $(wget http://${TftpSrv}/openlog/$OpenlogFilename -O /tmp/$OpenlogFilename); do
         i=$(($i+1))
         DebugLog "Update $OpenlogFilename failed, Retry.$i"

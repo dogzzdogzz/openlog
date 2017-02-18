@@ -2,7 +2,8 @@
 
 #prints each command before it executes. enable: set -o xtrace , disable: set +o xtrace
 #set -o xtrace
-OpenlogVersion="1.0.2"
+OpenlogVersion="1.0.4"
+OpenlogFilename="openlog.sh"
 Inittab=/etc/inittab
 ScreenConfig=/etc/screenrc
 ScreenLog=/tmp/screenlog.0
@@ -88,7 +89,7 @@ ConsoleEnable() {
             else
                 DebugLog $(echo "2.i= "$i", prompt= "$(tail -1 ${ScreenLog}))
                 DebugLog "ERROR: Failed to enable openlog console, please try again."
-                exit
+                OpenlogMainEnd
             fi
             i=$(($i+1))
         done
@@ -116,15 +117,10 @@ ConsoleDisable() {
         else
             DebugLog $(echo "i= "$i", prompt= "$(tail -1 ${ScreenLog}))
             DebugLog "ERROR: Failed to disable openlog console, please try again."
-            exit
+            OpenlogMainEnd
         fi
         i=$(($i+1))
     done
-
-    if [ $(ls -l $OpenlogDebugLog | grep -v .gz | awk '{print $5}') -gt 1000000 ]; then
-        rm ${OpenlogDebugLog}.gz
-        gzip ${OpenlogDebugLog}
-    fi
 }
 
 CheckConsoleStatus() {
@@ -141,7 +137,7 @@ CheckConsoleStatus() {
             break
         elif [ $i -eq 14 ]; then
             DebugLog "ERROR: Failed to access openlog console !"
-            exit
+            OpenlogMainEnd
         fi
         i=$(($i+1))
         sleep 1
@@ -149,14 +145,14 @@ CheckConsoleStatus() {
     if [ $ACTION = "status" ]; then
         if [ -f "${OpenlogState}" -a -n "$(screen -ls | grep tached)" ]; then
             DebugLog "Openlog console is ebabled\n"
-            exit
+            OpenlogMainEnd
         else
             DebugLog "Openlog console is disabled\n"
-            exit
+            OpenlogMainEnd
         fi
     elif [ ! -f "${OpenlogState}" -o -z "$(screen -ls | grep tached)" ] || [ "$(tail -c 2 ${ScreenLog})" = "${EscapeChar}" ]; then
         DebugLog "ERROR: Openlog console is disabled, please run \"sh "$0" enable\" first.\n"
-        exit
+        OpenlogMainEnd
     fi  
 }
 
@@ -175,7 +171,7 @@ LogList() {
             i=`expr $i + 1`
             if [ $i -gt 60 ]; then
                 DebugLog "ERROR: Failed to read file list, please try again"
-                exit
+                OpenlogMainEnd
             fi
         done
         grep LOG ${ScreenLog} | grep -v "    LOG" | grep -v "_LOG" > ${LOGLIST}
@@ -197,12 +193,12 @@ LogRead() {
     if [ ${Mode} = '1' ]; then
         if [ "$Filename" = "EMPTY_FILENAME" ]; then
             DebugLog "ERROR: Filename not found !"
-            exit
+            OpenlogMainEnd
         fi
         LogList   
         if [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
-            exit
+            OpenlogMainEnd
         else
             LoopConf
             if [ -z ${LogId} ]; then
@@ -225,7 +221,7 @@ LogRead() {
         #http://stackoverflow.com/questions/226703/how-do-i-prompt-for-input-in-a-linux-shell-script 
         while true; do
             echo > ${ScreenLog}
-            read -p "Which file ID you want to read ? (or input \"ls\" for print file list, \"N/n\" for exit) " file_id
+            read -p "Which file ID you want to read ? (or input \"ls\" for print file list, \"N/n\" for OpenlogMainEnd) " file_id
             case $file_id in
                 [0-9]* )    DebugLog "file_id="$file_id
                             if [ ${file_id} = '0' ] || [ ${file_id} -gt ${file_num} ] ; then
@@ -252,9 +248,9 @@ LogRead() {
                             ;;
 
                 [Nn] )      echo > ${ScreenLog}
-                            DebugLog "LogList exit"
+                            DebugLog "LogList OpenlogMainEnd"
                             echo -e "Remember to run \"sh "$0" --action disable\" when finished using "$0
-                            exit
+                            OpenlogMainEnd
                             ;;
 
                 * )         DebugLog "Please input file ID."
@@ -278,10 +274,10 @@ LoopConf() {
     DebugLog "MaxFileSize= "${MaxFileSize}
     if [ ${MemFree} -le 10000000 ]; then
         DebugLog "ERROR: Free memory is less than 10,000 kB, not enough free memory !!"
-        exit
+        OpenlogMainEnd
     elif [ ${MaxFileSize} -gt $((${MemFree} / 2)) ]; then
         DebugLog "ERROR: MaxFileSize is too big, please decrease it !!"
-        exit
+        OpenlogMainEnd
     fi
 
     FileSize="$(grep -w ${Filename} ${LOGLIST} | awk '{print $2}')"
@@ -294,26 +290,26 @@ LoopConf() {
             DebugLog "ReadEnd= $ReadEnd"
         elif [ $ReadStart -ge $ReadEnd ]; then
             DebugLog "ERROR: ReadStart must be less than ReadEnd !"
-            exit
+            OpenlogMainEnd
         elif [ $ReadStart -lt 0 ]; then
             DebugLog "ERROR: ReadStart must be greater than 0 !"
-            exit
+            OpenlogMainEnd
         elif [ $ReadStart -ge $FileSize ]; then
             DebugLog "ERROR: ReadStart must be less than Log file size !"
-            exit
+            OpenlogMainEnd
         elif [ $ReadEnd -gt $FileSize ]; then
             DebugLog "ERROR: ReadEnd must be less than Log file size !"
-            exit
+            OpenlogMainEnd
         else
             FileSize=$((${ReadEnd} - ${ReadStart}))
             DebugLog "FileSize= "$FileSize
         fi
     elif [ -z "$ReadStart" -a -n "$ReadEnd" ]; then
         DebugLog "ERROR: ReadStart not found !"
-        exit
+        OpenlogMainEnd
     elif [ -n "$ReadStart" -a -z "$ReadEnd" ]; then
         DebugLog "ERROR: ReadEnd not found !"
-        exit
+        OpenlogMainEnd
     else
         ReadStart=0
         ReadEnd=0
@@ -332,7 +328,7 @@ LogReadSub() {
     echo > ${ScreenLog}
     if [ ${LogId} -gt ${Loop} ]; then
         DebugLog "ERROR: Invalid log ID"
-        exit
+        OpenlogMainEnd
     else
         if [ ${LogId} -lt ${Loop} ]; then
             ReadLength=${MaxFileSize}
@@ -364,10 +360,10 @@ LogExport() {
 
     if [ "${Filename}" = "EMPTY_FILENAME" ]; then
         DebugLog "ERROR: -s FILENAME not found"
-        exit
+        OpenlogMainEnd
     elif [ -z "${LogId}" ]; then
         DebugLog "ERROR: -i LOG_INDEX not found"
-        exit
+        OpenlogMainEnd
     fi
 
     ConsoleEnable
@@ -388,7 +384,7 @@ LogExport() {
                 [Yy] )      LogExportSub
                             break;;
 
-                [Nn] )      DebugLog "LogExport exit"
+                [Nn] )      DebugLog "LogExport OpenlogMainEnd"
                             break;;
 
                 * )         DebugLog "Please input Y/y or N/n.";;
@@ -438,7 +434,7 @@ LogDelete() {
         while true; do
             LogList
             #http://stackoverflow.com/questions/226703/how-do-i-prompt-for-input-in-a-linux-shell-script 
-            read -p "Which file ID you want to delete ? (Input \"all\" for delete all log files or N/n for exit) " file_id
+            read -p "Which file ID you want to delete ? (Input \"all\" for delete all log files or N/n for OpenlogMainEnd) " file_id
             case $file_id in
                 [0-9]* )    #echo "file_id="$file_id
                             if [ $file_id = '0' ] || [ $file_id -gt $file_num ]; then
@@ -465,7 +461,7 @@ LogDelete() {
                             LogReset
                             break
                             ;;
-                [Nn] )      DebugLog "LogDelete exit"
+                [Nn] )      DebugLog "LogDelete OpenlogMainEnd"
                             break
                             ;;
                 * )         DebugLog "Please input file ID."
@@ -504,7 +500,7 @@ TftpUpload()
 #        DebugLog "Upload ${UPLOAD_FILENAME} successfully"
 #    elif ! $(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv}); then
 #        DebugLog "ERROR: Upload ${UPLOAD_FILENAME} failed"
-#        exit
+#        OpenlogMainEnd
 #    fi
     while ! $(tftp -p -l ${UPLOAD_FILENAME} ${TftpSrv}); do
         i=$(($i+1))
@@ -512,7 +508,7 @@ TftpUpload()
         sleep 1
         if [ $i -ge 5 ]; then
             DebugLog "ERROR: Upload ${UPLOAD_FILENAME} failed"
-            exit
+            OpenlogMainEnd
         fi
     done
     DebugLog "Upload ${UPLOAD_FILENAME} successfully"
@@ -523,7 +519,7 @@ Auto() {
     DebugLog "Function: Auto"
     if [ $Mode != "1" ]; then
         DebugLog "Mode must be 1"
-        exit
+        OpenlogMainEnd
     fi
 
     LogList
@@ -531,7 +527,7 @@ Auto() {
     if [ "$Filename" != "EMPTY_FILENAME" ]; then
         if [ -z "$(grep -w ${Filename} ${LOGLIST})" ]; then
             DebugLog "ERROR: Invalid FILENAME"
-            exit
+            OpenlogMainEnd
         else
             LogId=0
             LoopConf
@@ -673,7 +669,7 @@ SetTimeZone() {
             ;;
         *)
             DebugLog "Invalid argument"
-            exit
+            OpenlogMainEnd
             ;;
     esac
     DebugLog "$(date)"
@@ -681,56 +677,82 @@ SetTimeZone() {
 }
 
 Update() {
-    while ! $(tftp -gr $0 ${TftpSrv}); do
+    DebugLog "Function: Update"
+    cd /usr/sbin
+    while ! $(tftp -gr $OpenlogFilename ${TftpSrv}); do
         i=$(($i+1))
-        DebugLog "Update $0 failed, Retry.$i"
+        DebugLog "Update $OpenlogFilename failed, Retry.$i"
         sleep 1
         if [ $i -ge 5 ]; then
-            DebugLog "ERROR: Update $0 failed"
-            exit
+            DebugLog "ERROR: Update $OpenlogFilename failed"
+            OpenlogMainEnd
         fi
     done
-    DebugLog "Update $0 successfully"
+    DebugLog "Update $OpenlogFilename successfully"
+    OpenlogMainEnd
+}
+
+OpenlogMainEnd() {
+    DebugLog "######## openlog Main END ########"
     exit
+}
+
+Schedule() {
+    case ${ScheduleAct} in
+        add)
+                sed -i "/openlog.sh/d" /etc/crontabs/root
+                echo "${ScheduleTime} sh /usr/sbin/openlog.sh --action auto --timezone +8" >> /etc/crontabs/root
+                ;;
+        del)
+                sed -i "/openlog.sh/d" /etc/crontabs/root
+                ;;
+    esac
 }
 
 LogHelp() {
     echo -e "\nopenlog version: $OpenlogVersion"
 #    echo -e "\nUsage: sh "$0" --Mode Mode --action ACTION [--maxfilesize MaxFileSize] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
     echo -e "\nUsage: sh "$0" --action ACTION [--Mode Mode] [--Filename FILENAME] [--logid LOG_INDEX] [--timeout TIMEOUT]"
-    echo -e "--action : ACTION"
-    echo -e "  checkstorage     Delete log if log size > $MaxStoreSize bytes"
-    echo -e "  enable           Enable openlog console"
-    echo -e "  disable          Disable openlog console"
-    echo -e "  status           Show openlog console status"
-    echo -e "  list             List log files"
-    echo -e "  read             Read log file. <sh "$0" -a read -s MaxFileSize>"
-    echo -e "  export           Export log file. Only available for command Mode (-c 0)"
-    echo -e "  delete           Delete log file"
-    echo -e "  LogReset         Reset log file index to 0"
-    echo -e "  auto             Automatically enable openlog console, export all logs, upload to tftp server, delete uploaded logs from SD card, and disable console"
+    echo -e "  --action : ACTION"
+    echo -e "    checkstorage     Delete log if log size > $MaxStoreSize bytes"
+    echo -e "    enable           Enable openlog console"
+    echo -e "    disable          Disable openlog console"
+    echo -e "    status           Show openlog console status"
+    echo -e "    list             List log files"
+    echo -e "    read             Read log file. <sh "$0" -a read -s MaxFileSize>"
+    echo -e "    export           Export log file. Only available for command Mode (-c 0)"
+    echo -e "    delete           Delete log file"
+    echo -e "    LogReset         Reset log file index to 0"
+    echo -e "    auto             Automatically enable openlog console, export all logs, upload to tftp server, delete uploaded logs from SD card, and disable console"
     #echo -e "--Mode : Mode"
     #echo -e "  1                Command Mode"
     #echo -e "  0                Interactive Mode"
-    echo -e "--maxfilesize : MaxFileSize"
+    echo -e "  --maxfilesize : MaxFileSize"
     echo -e "                   MaxFileSize is the max. size (byes) of each log file."
     echo -e "                   Specifying the value carefully to avoid log file is too big for free memory"
-    echo -e "--Filename : FILENAME"
+    echo -e "  --Filename : FILENAME"
     echo -e "                   Log FILENAME to read/delete/export."
     echo -e "                   Using \"all\" can delete all log files when ACTION is \"delete\" (-a delete)" 
-    echo -e "--logid : LOG_INDEX (required when --action export)"
+    echo -e "  --logid : LOG_INDEX (required when --action export)"
     echo -e "                   Log index to export"
-    echo -e "--readstart : ReadStart (required enter with --readend)"
+    echo -e "  --schedule add/delete/edit: Add/Delete openlog entry in crontabs"
+    echo -e "                   --schedule add \"5 1 * * *\""
+    echo -e "                   --schedule del"
+    echo -e "  --readstart : ReadStart (required enter with --readend)"
     echo -e "                   start byte of log to read"
-    echo -e "--readend : ReadEnd (required enter with --readstart)"
+    echo -e "  --readend : ReadEnd (required enter with --readstart)"
     echo -e "                   End byte of log to read" 
-    echo -e "--tftpsrv : TftpSrv (default: diagnosis.engeniusnetworks.com)"
+    echo -e "  --tftpsrv : TftpSrv (default: diagnosis.engeniusnetworks.com)"
     echo -e "                   IP or hostname of tftp server for uploading log"
-    echo -e "--timezone : Set AP timezone"
+    echo -e "  --timezone : Set AP timezone"
     echo -e "                   -8, +8, 0"
 }
 
 Debuglvl=1
+if [ $(ls -l $OpenlogDebugLog | grep -v .gz | awk '{print $5}') -gt 1000000 ]; then
+    rm ${OpenlogDebugLog}.gz
+    gzip ${OpenlogDebugLog}
+fi
 DebugLog "####################################"
 DebugLog "######## openlog Main START ########"
 DebugLog "####################################"
@@ -740,7 +762,7 @@ ps | grep $0 | grep -v grep | grep -v "/bin/sh" > $OpenlogState
 if [ $(cat $OpenlogState | wc -l) -gt 1 ]; then
     DebugLog "[$(date +"%Y/%m/%d %H:%M:%S")] ProcessNum = $(cat $OpenlogState | wc -l)"
     DebugLog "[$(date +"%Y/%m/%d %H:%M:%S")] ERROR: Another openlog.sh process is running !"
-    exit
+    OpenlogMainEnd
 fi
 #Debuglvl=0
 
@@ -750,13 +772,14 @@ echo > $ScreenLog
 while [[ $# -ge 1 ]]
 do
     argv="$1"
+    DebugLog "argv= $argv"
     case $argv in
 #        --Mode)
 #            Mode="$2"
 #            echo "Mode="${Mode}
 #            if [ ${Mode} != "0" -a ${Mode} != "1" ]; then
 #                echo -e "ERROR: Invalid Mode"
-#                exit
+#                OpenlogMainEnd
 #            fi
 #            shift 2
 #            ;;
@@ -768,11 +791,11 @@ do
             MaxFileSize_tmp="$2"
             case ${MaxFileSize_tmp} in
                 ''|*[!0-9]*)    DebugLog "ERROR: MaxFileSize is not a number\n"
-                                exit
+                                OpenlogMainEnd
                                 ;;
                 *)              if [ ${MaxFileSize_tmp} -le 0 ]; then
                                     DebugLog "ERROR: MaxFileSize must be more than 0"
-                                    exit
+                                    OpenlogMainEnd
                                 fi
                                 ;;
             esac
@@ -786,7 +809,7 @@ do
             LogId="$2"
             case ${LogId} in
                 ''|*[!0-9]*)    DebugLog "ERROR: LOG_INDEX is not a number"
-                                exit
+                                OpenlogMainEnd
                                 ;;
                 *)
                                 ;;
@@ -801,7 +824,7 @@ do
             ReadStart="$2"
             case ${ReadStart} in
                 ''|*[!0-9]*)    DebugLog "ERROR: ReadStart is not a number"
-                                exit
+                                OpenlogMainEnd
                                 ;;
                 *)              
                                 ;;
@@ -812,12 +835,29 @@ do
             ReadEnd="$2"
             case ${ReadEnd} in
                 ''|*[!0-9]*)    DebugLog "ERROR: ReadEnd is not a number"
-                                exit
+                                OpenlogMainEnd
                                 ;;
                 *)              
                                 ;;
             esac
             shift 2
+            ;;
+        --schedule)
+            ScheduleAct="$2"
+            case ${ScheduleAct} in
+                add)
+                                ScheduleTime="$3"
+                                Schedule
+                                shift 3
+                                ;;
+                del)
+                                Schedule
+                                shift 2
+                                ;;
+                *)              DebugLog "ERROR: --schedule Invalid argument"
+                                OpenlogMainEnd
+                                ;;
+            esac
             ;;
         --timezone)
             TimeZone="$2"
@@ -830,58 +870,60 @@ do
             ;;
         -v)
             Debuglvl=1
-            shift 1
+            shift 2
             ;;
         -h|--help)
             LogHelp
-            exit
+            OpenlogMainEnd
             ;;
         *)
-            DebugLog "Invalid argument"
-            exit
+            DebugLog "argv: Invalid argument"
+            OpenlogMainEnd
             ;;
     esac
 done
 
-case $ACTION in
-    checkstorage)
-        CheckStorage
-        ;;
-    enable)
-        ConsoleEnable
-        ;;
-    disable)
-        ConsoleDisable
-        ;;
-    status)
-        CheckConsoleStatus
-        ;;
-    list)
-        LogList
-        ;;
-    read)
-        LogRead
-        ;;
-    export)
-        LogExport
-        ;;
-    delete)
-        LogDelete
-        ;;
-    reset)
-        LogReset
-        ;;
-    show)
-        CatFileList
-        ;;
-#    upload)
-#        TftpUpload
-#        ;;   
-    auto)
-        Auto
-        ;;
-    * )
-        DebugLog "ERROR: Invalid action"
-        ;;
-esac
-DebugLog "######## openlog Main END ########"
+if [ ! -z $ACTION ]; then
+    case $ACTION in
+        checkstorage)
+            CheckStorage
+            ;;
+        enable)
+            ConsoleEnable
+            ;;
+        disable)
+            ConsoleDisable
+            ;;
+        status)
+            CheckConsoleStatus
+            ;;
+        list)
+            LogList
+            ;;
+        read)
+            LogRead
+            ;;
+        export)
+            LogExport
+            ;;
+        delete)
+            LogDelete
+            ;;
+        reset)
+            LogReset
+            ;;
+        show)
+            CatFileList
+            ;;
+    #    upload)
+    #        TftpUpload
+    #        ;;   
+        auto)
+            Auto
+            ;;
+        * )
+            DebugLog "ERROR: Invalid ACTION"
+            ;;
+    esac
+fi
+OpenlogMainEnd

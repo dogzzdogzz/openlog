@@ -678,8 +678,8 @@ SetTimeZone() {
 
 Update() {
     DebugLog "Function: Update"
-    cd /usr/sbin
-    while ! $(tftp -gr $OpenlogFilename ${TftpSrv}); do
+#    while ! $(tftp -gr $OpenlogFilename ${TftpSrv}); do
+    while ! $(wget http://${TftpSrv}/openlog/$OpenlogFilename -O /tmp/$OpenlogFilename); do
         i=$(($i+1))
         DebugLog "Update $OpenlogFilename failed, Retry.$i"
         sleep 1
@@ -688,6 +688,8 @@ Update() {
             OpenlogMainEnd
         fi
     done
+    sleep 1
+    mv /tmp/$OpenlogFilename /usr/sbin/$OpenlogFilename
     DebugLog "Update $OpenlogFilename successfully"
     OpenlogMainEnd
 }

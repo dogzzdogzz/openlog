@@ -2,7 +2,7 @@
 
 #prints each command before it executes. enable: set -o xtrace , disable: set +o xtrace
 #set -o xtrace
-OpenlogVersion="1.0.4"
+OpenlogVersion="1.0.5"
 OpenlogFilename="openlog.sh"
 Inittab=/etc/inittab
 ScreenConfig=/etc/screenrc
@@ -703,7 +703,11 @@ Schedule() {
     case ${ScheduleAct} in
         add)
                 sed -i "/openlog.sh/d" /etc/crontabs/root
-                echo "${ScheduleTime} sh /usr/sbin/openlog.sh --action auto --timezone +8" >> /etc/crontabs/root
+                if [ ! -z $TimeZone ]; then
+                    echo "${ScheduleTime} sh /usr/sbin/openlog.sh --action auto --timezone $TimeZone" >> /etc/crontabs/root
+                else
+                    echo "${ScheduleTime} sh /usr/sbin/openlog.sh --action auto" >> /etc/crontabs/root
+                fi
                 ;;
         del)
                 sed -i "/openlog.sh/d" /etc/crontabs/root
@@ -737,8 +741,9 @@ LogHelp() {
     echo -e "                   Using \"all\" can delete all log files when ACTION is \"delete\" (-a delete)" 
     echo -e "  --logid : LOG_INDEX (required when --action export)"
     echo -e "                   Log index to export"
-    echo -e "  --schedule add/delete/edit: Add/Delete openlog entry in crontabs"
+    echo -e "  --schedule add/delete: Add/Delete openlog entry in crontabs"
     echo -e "                   --schedule add \"5 1 * * *\""
+    echo -e "                   --schedule add \"5 1 * * *\" timezone +8"
     echo -e "                   --schedule del"
     echo -e "  --readstart : ReadStart (required enter with --readend)"
     echo -e "                   start byte of log to read"
@@ -849,8 +854,13 @@ do
             case ${ScheduleAct} in
                 add)
                                 ScheduleTime="$3"
+                                if [ "$4" = "timezone" ]; then
+                                    TimeZone="$5"
+                                    shift 5
+                                else
+                                    shift 3
+                                fi
                                 Schedule
-                                shift 3
                                 ;;
                 del)
                                 Schedule
